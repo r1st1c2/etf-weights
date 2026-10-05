@@ -1,0 +1,9 @@
+# Ignorisano sve osim onoga sto workflow mora da ima
+*
+!.gitignore
+!fetch_holdings.py
+!lookthrough.py
+!holdings_matrix.csv
+!.github/
+!.github/workflows/
+!.github/workflows/update.yml
