@@ -39,6 +39,7 @@ PORTFOLIO_WEIGHTS = pd.Series(
         "VGLA": 0.07,
         "IWMO": 0.065,
         "SEC0": 0.035,
+        "SMH": 0.0,     # postavi stvarni udeo; ostali se normalizuju u app.py
     },
     name="etf_weight",
 )
@@ -49,12 +50,15 @@ HOLDINGS_FILES = {
     "VGLA": Path("vgla_holdings.csv"),
     "IWMO": Path("iwmo_holdings.csv"),
     "SEC0": Path("sec0_holdings.csv"),
+    "SMH": Path("smh_holdings.csv"),
 }
 
 TOP_N = 20
 
 # Izvori: iShares (Asset Class == Equity) i Vanguard (securityType EQ.*)
 ISHARES = {"IWMO", "SEC0"}
+# Fondovi sa skracenim nazivima koji se upareju sa Vanguard univerzumom
+SHORT_NAME_SOURCES = ISHARES | {"SMH"}
 
 # Sufiksi i sluzbene reci koje se skidaju pri normalizaciji naziva kompanije
 NAME_NOISE = {
@@ -144,10 +148,22 @@ def _read_vanguard(text: str) -> pd.DataFrame:
     return pd.DataFrame({"name": df[name_col], "weight": _to_number(df[w_col])})
 
 
+def _read_smh(text: str) -> pd.DataFrame:
+    """VanEck SMH (smh_holdings.csv iz fetch_holdings.py): name, ticker, weight u %; bez keša."""
+    df = pd.read_csv(io.StringIO(text), dtype=str)
+    df = df[~df["ticker"].str.strip().isin(["--", ""])]
+    return pd.DataFrame({"name": df["name"], "weight": _to_number(df["weight"])})
+
+
 def load_holdings(etf: str, path: Path) -> tuple[pd.Series, pd.Series]:
     """Vraca (tezine, nazivi): index = normalizovan naziv, tezine u [0, 1], nazivi za prikaz."""
     text = _read_text(path)
-    raw = _read_ishares(text) if etf in ISHARES else _read_vanguard(text)
+    if etf in ISHARES:
+        raw = _read_ishares(text)
+    elif etf == "SMH":
+        raw = _read_smh(text)
+    else:
+        raw = _read_vanguard(text)
     raw = raw.dropna(subset=["name", "weight"])
     raw["name"] = raw["name"].astype(str).str.strip()
     raw["key"] = raw["name"].map(normalize_name)
@@ -199,6 +215,9 @@ def match_short_names(series: pd.Series, universe: set[str]) -> pd.Series:
                 if (k + " ").startswith(key + " ")
                 or ((key + " ").startswith(k + " ") and len(k.split()) >= 2)
             ]
+        # Vise kandidata koji su svi prefiksi skracenog kljuca -> najduzi (npr. TSMC)
+        if len(cands) > 1 and all((key + " ").startswith(c + " ") for c in cands):
+            cands = [max(cands, key=len)]
         if not cands:
             cands = get_close_matches(key, universe, n=2, cutoff=0.9)
             if len(cands) > 1:
@@ -233,7 +252,7 @@ def build_holdings_matrix(files: dict[str, Path]) -> tuple[pd.DataFrame, pd.Seri
     # Skraceni iShares nazivi se upare sa nazivima iz Vanguard fondova (VWCE/VGLA)
     universe = {k for s in series_list if s.name in ("VWCE", "VGLA") for k in s.index}
     series_list = [
-        match_short_names(s, universe) if s.name in ISHARES and universe else s
+        match_short_names(s, universe) if s.name in SHORT_NAME_SOURCES and universe else s
         for s in series_list
     ]
 

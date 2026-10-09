@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 import csv
+import http.cookiejar
 import json
 import sys
 import urllib.request
+import zipfile
+from xml.etree import ElementTree as ET
 from pathlib import Path
 
 UA = "Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0"
@@ -60,11 +63,54 @@ def fetch_vanguard(name: str, port_id: str) -> None:
     print(f"{name}: {len(rows):,} redova")
 
 
+# VanEck UCITS SMH: sajt trazi kolacice sesije, pa se prvo otvori stranica fonda, pa tek onda Download
+VANECK_PAGE = "https://www.vaneck.com/lu/en/investments/semiconductor-etf"
+VANECK_DOWNLOAD = VANECK_PAGE + "/downloads/holdings/"
+XLSX_NS = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+
+
+def _xlsx_rows(data: bytes) -> list[list[str]]:
+    """Minimalno citanje prvog sheet-a iz .xlsx (stdlib, bez dodatnih paketa)."""
+    import io
+
+    z = zipfile.ZipFile(io.BytesIO(data))
+    strings = [
+        "".join(si.itertext())
+        for si in ET.fromstring(z.read("xl/sharedStrings.xml")).findall("x:si", XLSX_NS)
+    ]
+    rows = []
+    for row in ET.fromstring(z.read("xl/worksheets/sheet1.xml")).iter(f"{{{XLSX_NS['x']}}}row"):
+        vals = []
+        for c in row.findall("x:c", XLSX_NS):
+            v = c.find("x:v", XLSX_NS)
+            vals.append("" if v is None else strings[int(v.text)] if c.get("t") == "s" else v.text)
+        rows.append(vals)
+    return rows
+
+
+def fetch_vaneck_smh(name: str = "smh_holdings.csv") -> None:
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+    opener.addheaders = [("User-Agent", UA)]
+    opener.open(VANECK_PAGE, timeout=60).read()
+    resp = opener.open(VANECK_DOWNLOAD, timeout=60)
+    data = resp.read()
+    if not data.startswith(b"PK"):
+        raise RuntimeError(f"{name}: odgovor nije .xlsx ({resp.geturl()})")
+    rows = _xlsx_rows(data)
+    header = next(i for i, r in enumerate(rows) if "Holding Name" in r)
+    with open(OUT / name, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["number", "name", "ticker", "isin", "shares", "market_value", "weight"])
+        w.writerows(r for r in rows[header + 1:] if any(r))
+    print(f"{name}: {len(rows) - header - 1} redova")
+
+
 def main() -> int:
     for name, url in ISHARES.items():
         fetch_ishares(name, url)
     for name, port in VANGUARD.items():
         fetch_vanguard(name, port)
+    fetch_vaneck_smh()
     return 0
 
 
