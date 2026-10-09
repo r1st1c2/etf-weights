@@ -24,4 +24,4 @@ jobs:
           git config user.name "github-actions"
           git config user.email "actions@users.noreply.github.com"
           git add holdings_matrix.csv
-          git diff --cached --quiet || (git commit -m "Update holdings matrix" && git push)
+          git diff --cached --quiet || (git commit -m "Update holdings matrix" && git pull --rebase -X theirs && git push)
